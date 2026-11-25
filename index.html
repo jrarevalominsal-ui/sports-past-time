@@ -275,7 +275,12 @@
 
 <div class="container">
     <h1>4-Skills English Test: Sports & Free-Time Activities</h1>
-    <p class="subtitle">Evaluación integral en Simple Past (Nivel Básico): 1. Speaking & Reading · 2. Reading Comprehension · 3. Listening · 4. Writing.</p>
+\1    <div style="background:#f0fdfa;border:1px solid #99f6e4;padding:10px 14px;border-radius:8px;margin-bottom:16px;font-size:0.92em;">
+        🔊 <strong>Voz del audio:</strong>
+        <select id="voiceSelect" style="padding:6px;border-radius:6px;border:1px solid #cbd5e1;max-width:100%;"></select>
+        <button type="button" class="btn-play" onclick="speakText('Hi there! This is how I sound. Let us practice English together.', 1)">▶ Probar voz</button>
+        <div style="color:#475569;margin-top:6px;">Tip: las voces más naturales (tipo "Natural") aparecen en <strong>Microsoft Edge</strong>.</div>
+    </div>
 
     <div class="student-box">
         <label for="studentName"><strong>Nombre del estudiante:</strong></label>
@@ -322,7 +327,7 @@
         <div class="feedback-box" id="writingFeedback"></div>
     </div>
 
-    <button class="btn-submit" onclick="finishExam()">Finalizar Evaluación y Calcular Nota (0.0 - 10.0)</button>
+    <button class="btn-submit" id="btnFinish" onclick="finishExam()">Finalizar Evaluación y Calcular Nota (1.0 - 10.0)</button>
 
     <div class="final-summary" id="finalSummary"></div>
 </div>
@@ -482,72 +487,122 @@
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
+    const esc = t => String(t).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+    const clamp01 = v => Math.max(0, Math.min(1, v));
+    const FEMALE = /aria|jenny|ava|samantha|allison|susan|zira|emma|michelle|joanna|nicole|karen|salli|kendra|kimberly|google us english/i;
+    const MALE = /guy|davis|david|mark|alex|tom|aaron|christopher|eric|roger|brandon|matthew|joey|jason|fred|ryan/i;
+    const NEURAL = /natural|neural|online/i;
+    let dialogueToken = 0;
+
+    function voiceRank(v) {
+        const n = v.name, l = (v.lang || "").replace("_", "-").toLowerCase();
+        let s = 0;
+        if (l === "en-us") s += 10; else if (l.startsWith("en")) s += 2; else return -99;
+        if (NEURAL.test(n)) s += 12;
+        if (/premium|enhanced|siri/i.test(n)) s += 8;
+        if (/google us english/i.test(n)) s += 5;
+        if (/samantha|allison|ava|aria|jenny|guy|davis|alex/i.test(n)) s += 3;
+        if (/espeak|compact|novelty|bad news|bahh|bells|boing|bubbles|cellos|deranged|good news|hysterical|organ|trinoids|whisper|zarvox|albert|junior|kathy|ralph/i.test(n)) s -= 30;
+        return s;
+    }
     function getEnglishVoices() {
         if (!("speechSynthesis" in window)) return [];
-        const all = window.speechSynthesis.getVoices();
-        const en = all.filter(v => v.lang && v.lang.toLowerCase().startsWith("en"));
-        en.sort((a, b) => {
-            const scoreA = (a.name.includes("Natural") ? 2 : 0) + (a.name.includes("Google") ? 1 : 0);
-            const scoreB = (b.name.includes("Natural") ? 2 : 0) + (b.name.includes("Google") ? 1 : 0);
-            return scoreB - scoreA;
-        });
-        return en.length ? en : all;
+        return window.speechSynthesis.getVoices()
+            .filter(v => voiceRank(v) > -50)
+            .sort((a, b) => voiceRank(b) - voiceRank(a));
+    }
+    function populateVoices() {
+        const sel = document.getElementById("voiceSelect");
+        if (!sel) return;
+        const cur = sel.value, vs = getEnglishVoices();
+        sel.innerHTML = vs.map(v => `<option value="${esc(v.name)}">${esc(v.name)}</option>`).join("") || `<option value="">Voz por defecto</option>`;
+        if (cur && vs.some(v => v.name === cur)) sel.value = cur;
+    }
+    function getSelectedVoice() {
+        const vs = getEnglishVoices();
+        const sel = document.getElementById("voiceSelect");
+        return vs.find(v => sel && v.name === sel.value) || vs[0] || null;
     }
 
     const speakerProfiles = {
-        Camila:  { voiceIndex: 0, pitch: 1.14, rateOffset: 0.00 },
-        Sofía:   { voiceIndex: 0, pitch: 1.06, rateOffset: 0.02 },
-        Emma:    { voiceIndex: 0, pitch: 1.18, rateOffset: -0.02 },
-        Valeria: { voiceIndex: 0, pitch: 1.10, rateOffset: 0.00 },
-        Diego:   { voiceIndex: 1, pitch: 0.90, rateOffset: 0.00 },
-        Lucas:   { voiceIndex: 1, pitch: 0.95, rateOffset: 0.02 },
-        Mateo:   { voiceIndex: 2, pitch: 0.86, rateOffset: -0.02 }
+        Camila:  { g: "f", i: 0, pitch: 1.08 },
+        Sofía:   { g: "f", i: 1, pitch: 1.00 },
+        Emma:    { g: "f", i: 2, pitch: 1.12 },
+        Valeria: { g: "f", i: 1, pitch: 1.05 },
+        Diego:   { g: "m", i: 0, pitch: 0.95 },
+        Lucas:   { g: "m", i: 1, pitch: 1.02 },
+        Mateo:   { g: "m", i: 0, pitch: 0.90 }
     };
 
     function stopAudio() {
-        if ("speechSynthesis" in window) {
-            window.speechSynthesis.cancel();
-        }
+        dialogueToken++;
+        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
     }
 
-    function speakText(text, rate = 0.95) {
-        if (!("speechSynthesis" in window)) {
-            alert("Tu navegador no soporta síntesis de voz.");
-            return;
-        }
-        window.speechSynthesis.cancel();
-        const voices = getEnglishVoices();
-        const utterance = new SpeechSynthesisUtterance(text);
-        if (voices.length > 0) utterance.voice = voices[0];
-        utterance.lang = "en-US";
-        utterance.rate = rate;
-        window.speechSynthesis.speak(utterance);
+    function speakText(text, rate = 1) {
+        if (!("speechSynthesis" in window)) { alert("Tu navegador no soporta síntesis de voz."); return; }
+        stopAudio();
+        const u = new SpeechSynthesisUtterance(text);
+        const v = getSelectedVoice();
+        if (v) u.voice = v;
+        u.lang = "en-US";
+        u.rate = rate;
+        u.pitch = 1;
+        window.speechSynthesis.speak(u);
+    }
+    function speakDictation(id, rate) {
+        speakText(dictationSentences.find(d => d.id === id).text, rate);
     }
 
-    function playDialogueTurns(dialogueIndex, baseRate = 0.95) {
-        if (!("speechSynthesis" in window)) {
-            alert("Tu navegador no soporta síntesis de voz.");
-            return;
-        }
-        window.speechSynthesis.cancel();
-        const dialogue = listeningDialogues[dialogueIndex];
-        const voices = getEnglishVoices();
-
-        dialogue.turns.forEach((turn, idx) => {
-            const profile = speakerProfiles[turn.speaker] || { voiceIndex: idx, pitch: 1.0, rateOffset: 0 };
-            const utterance = new SpeechSynthesisUtterance(turn.line);
-            if (voices.length > 0) {
-                utterance.voice = voices[profile.voiceIndex % voices.length];
-            }
-            utterance.lang = "en-US";
-            utterance.pitch = profile.pitch;
-            utterance.rate = Math.max(0.65, baseRate + profile.rateOffset);
-            window.speechSynthesis.speak(utterance);
-        });
+    // Conversaciones: voz femenina/masculina real, turnos en secuencia y con pausa natural
+    function playDialogueTurns(dialogueIndex, baseRate = 1) {
+        if (!("speechSynthesis" in window)) { alert("Tu navegador no soporta síntesis de voz."); return; }
+        stopAudio();
+        const token = ++dialogueToken;
+        const d = listeningDialogues[dialogueIndex];
+        const vs = getEnglishVoices();
+        let f = vs.filter(v => FEMALE.test(v.name)), m = vs.filter(v => MALE.test(v.name));
+        if (!f.length) f = vs.slice(0, 1);
+        if (!m.length) m = vs.length > 1 ? [vs[1]] : vs.slice(0, 1);
+        const lists = { f, m };
+        let i = 0;
+        const next = () => {
+            if (token !== dialogueToken || i >= d.turns.length) return;
+            const t = d.turns[i++];
+            const p = speakerProfiles[t.speaker] || { g: "f", i: 0, pitch: 1 };
+            const list = lists[p.g];
+            const own = list[p.i];
+            const voice = own || list[0] || null;
+            const u = new SpeechSynthesisUtterance(t.line);
+            if (voice) u.voice = voice;
+            u.lang = "en-US";
+            u.rate = baseRate;
+            u.pitch = (own && NEURAL.test(voice.name)) ? 1 : p.pitch;
+            u.onend = () => setTimeout(next, 450);
+            u.onerror = () => {};
+            window.speechSynthesis.speak(u);
+        };
+        next();
     }
 
-    function speakWord(word) {
-        speakText(word, 0.85);
+    function speakWord(word) { speakText(word, 0.85); }
+
+    function practiceWord(btn) {
+        if (!SpeechRecognition) { alert("Usa Google Chrome o Microsoft Edge."); return; }
+        const target = normToken(btn.dataset.word);
+        const r = new SpeechRecognition();
+        r.lang = "en-US"; r.maxAlternatives = 5; r.interimResults = false;
+        btn.disabled = true; btn.innerText = "🎙️ Habla ahora...";
+        const finish = msg => { btn.innerText = msg; setTimeout(() => { btn.innerText = "🎤 Repetir"; btn.disabled = false; }, 3000); };
+        r.onresult = e => {
+            const alts = Array.from(e.results[0]).map(a => normalizeWords(a.transcript));
+            if (alts[0].includes(target)) finish("✅ ¡Bien!");
+            else if (alts.some(a => a.includes(target))) finish("🔁 Casi, inténtalo otra vez");
+            else finish(`❌ Se entendió: "${alts[0].join(" ")}"`);
+        };
+        r.onerror = () => finish("⚠️ No se escuchó");
+        r.onnomatch = () => finish("⚠️ No se escuchó");
+        try { r.start(); } catch (_) { finish("⚠️ Error"); }
     }
 
     function renderSpeakingCards() {
@@ -579,7 +634,7 @@
         comprehensionQuestions.forEach((item, idx) => {
             const row = document.createElement("div");
             row.className = "question-row";
-            const optionsHtml = item.options.map(opt => `<option value="${opt}">${opt}</option>`).join("");
+            const optionsHtml = item.options.map(opt => `<option value="${esc(opt)}">${esc(opt)}</option>`).join("");
             row.innerHTML = `
                 <strong>${item.q}</strong>
                 <select id="q-${idx}">
@@ -594,7 +649,6 @@
     function renderDictationCards() {
         const container = document.getElementById("dictation-container");
         dictationSentences.forEach(item => {
-            const safeText = item.text.replace(/'/g, "\\'");
             const card = document.createElement("div");
             card.className = "card";
             card.innerHTML = `
@@ -603,8 +657,8 @@
                     <span class="score-pill" id="dict-score-${item.id}">Dictado: --%</span>
                 </div>
                 <div class="controls">
-                    <button class="btn-play" onclick="speakText('${safeText}', 0.95)">🔊 Escuchar oración</button>
-                    <button class="btn-slow" onclick="speakText('${safeText}', 0.72)">🐢 Escuchar lento</button>
+                    <button class="btn-play" onclick="speakDictation(${item.id}, 1)">🔊 Escuchar oración</button>
+                    <button class="btn-slow" onclick="speakDictation(${item.id}, 0.8)">🐢 Escuchar lento</button>
                     <button class="btn-pause" onclick="stopAudio()">⏹️ Detener</button>
                 </div>
                 <input type="text" class="dictation-input" id="dict-input-${item.id}" placeholder="Escribe exactamente lo que escuchas...">
@@ -619,13 +673,13 @@
         listeningDialogues.forEach((d, idx) => {
             const row = document.createElement("div");
             row.className = "question-row";
-            const optionsHtml = d.options.map(opt => `<option value="${opt}">${opt}</option>`).join("");
+            const optionsHtml = d.options.map(opt => `<option value="${esc(opt)}">${esc(opt)}</option>`).join("");
             row.innerHTML = `
                 <div class="card-header" style="margin-bottom:4px;">
                     <span class="badge-blue">${d.title}</span>
                     <div class="controls">
-                        <button class="btn-play" onclick="playDialogueTurns(${idx}, 0.95)">🔊 Escuchar conversación</button>
-                        <button class="btn-slow" onclick="playDialogueTurns(${idx}, 0.75)">🐢 Lento</button>
+                        <button class="btn-play" onclick="playDialogueTurns(${idx}, 1)">🔊 Escuchar conversación</button>
+                        <button class="btn-slow" onclick="playDialogueTurns(${idx}, 0.8)">🐢 Lento</button>
                         <button class="btn-pause" onclick="stopAudio()">⏹️ Detener</button>
                     </div>
                 </div>
@@ -639,84 +693,74 @@
         });
     }
 
+    const numberWords = {"0":"zero","1":"one","2":"two","3":"three","4":"four","5":"five","6":"six","7":"seven","8":"eight","9":"nine","10":"ten","20":"twenty","30":"thirty","40":"forty","50":"fifty","60":"sixty","90":"ninety"};
+    const recordedIds = new Set();
+    let manualStop = false;
+
+    function normToken(w) {
+        let c = String(w).toLowerCase().replace(/[’]/g, "'").replace(/^[^a-z0-9']+|[^a-z0-9']+$/g, "");
+        c = numberWords[c] || c;
+        return c.replace(/'/g, "");
+    }
     function normalizeWords(str) {
-        return str
-            .toLowerCase()
-            .replace(/[^a-z0-9\s']/g, "")
-            .trim()
-            .split(/\s+/)
-            .filter(Boolean);
+        return String(str).split(/\s+/).map(normToken).filter(Boolean);
+    }
+    // Compara en orden (LCS): total y aciertos salen de la misma lista => máximo 100%
+    function matchWords(rawTarget, spokenList) {
+        const t = rawTarget.map(normToken), n = t.length, m = spokenList.length;
+        const dp = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+        for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++)
+            dp[i][j] = (t[i - 1] && t[i - 1] === spokenList[j - 1]) ? dp[i - 1][j - 1] + 1 : Math.max(dp[i - 1][j], dp[i][j - 1]);
+        const ok = new Array(n).fill(false);
+        let i = n, j = m;
+        while (i > 0 && j > 0) {
+            if (t[i - 1] && t[i - 1] === spokenList[j - 1]) { ok[i - 1] = true; i--; j--; }
+            else if (dp[i - 1][j] >= dp[i][j - 1]) i--; else j--;
+        }
+        const total = t.filter(Boolean).length, matched = ok.filter(Boolean).length;
+        return { ok, total, matched, extra: Math.max(0, m - matched) };
+    }
+    function highlight(rawTarget, ok) {
+        return rawTarget.map((w, i) => normToken(w) ? `<span class="${ok[i] ? "word-ok" : "word-miss"}">${esc(w)}</span>` : esc(w)).join(" ");
     }
 
     function evaluatePronunciation(passageId, originalText, spokenText) {
         const targetWords = originalText.split(/\s+/);
-        const spokenList = normalizeWords(spokenText);
-        const spokenSet = new Set(spokenList);
-
-        let matchedCount = 0;
-        const missedList = [];
-
-        const highlighted = targetWords.map(rawWord => {
-            const clean = rawWord.toLowerCase().replace(/[^a-z0-9']/g, "");
-            if (!clean) return rawWord;
-            if (spokenSet.has(clean)) {
-                matchedCount++;
-                return `<span class="word-ok">${rawWord}</span>`;
-            } else {
-                missedList.push(rawWord.replace(/^[^a-zA-Z0-9']+|[^a-zA-Z0-9']+$/g, ""));
-                return `<span class="word-miss">${rawWord}</span>`;
-            }
-        });
-
-        missedWordsByPassage[passageId] = missedList;
-
-        const totalCleanWords = targetWords.filter(w => w.replace(/[^a-z0-9']/g, "").length > 0).length;
-        const accuracy = totalCleanWords > 0 ? (matchedCount / totalCleanWords) : 0;
+        const r = matchWords(targetWords, normalizeWords(spokenText));
+        const accuracy = r.total ? clamp01(r.matched / r.total) : 0;
+        recordedIds.add(passageId);
         pronunciationScores[passageId] = accuracy;
+        missedWordsByPassage[passageId] = targetWords
+            .filter((w, i) => normToken(w) && !r.ok[i])
+            .map(w => w.replace(/^[^a-zA-Z0-9']+|[^a-zA-Z0-9']+$/g, ""));
 
         document.getElementById(`score-${passageId}`).innerText = `Pronunciación: ${Math.round(accuracy * 100)}%`;
         const fb = document.getElementById(`feedback-${passageId}`);
         fb.style.display = "block";
         fb.innerHTML = `
-            <div><strong>Retroalimentación palabra por palabra:</strong> ${highlighted.join(" ")}</div>
-            <div class="heard-text"><strong>Reconocido por el sistema:</strong> "${spokenText || "No se detectó voz"}"</div>
+            <div><strong>Retroalimentación palabra por palabra:</strong> ${highlight(targetWords, r.ok)}</div>
+            <div class="heard-text"><strong>Reconocido por el sistema:</strong> "${esc(spokenText || "No se detectó voz")}"</div>
         `;
     }
 
     function evaluateDictation() {
         let totalRatio = 0;
-
         dictationSentences.forEach(item => {
             const userInput = document.getElementById(`dict-input-${item.id}`).value.trim();
             const targetWords = item.text.split(/\s+/);
-            const userSet = new Set(normalizeWords(userInput));
-
-            let matched = 0;
-            const highlighted = targetWords.map(rawWord => {
-                const clean = rawWord.toLowerCase().replace(/[^a-z0-9']/g, "");
-                if (!clean) return rawWord;
-                if (userSet.has(clean)) {
-                    matched++;
-                    return `<span class="word-ok">${rawWord}</span>`;
-                } else {
-                    return `<span class="word-miss">${rawWord}</span>`;
-                }
-            });
-
-            const cleanCount = targetWords.filter(w => w.replace(/[^a-z0-9']/g, "").length > 0).length;
-            const ratio = cleanCount > 0 ? (matched / cleanCount) : 0;
+            const r = matchWords(targetWords, normalizeWords(userInput));
+            // Las palabras que sobran restan un poco
+            const ratio = r.total ? clamp01(r.matched / (r.total + r.extra)) : 0;
             totalRatio += ratio;
-
             document.getElementById(`dict-score-${item.id}`).innerText = `Dictado: ${Math.round(ratio * 100)}%`;
             const fb = document.getElementById(`dict-fb-${item.id}`);
             fb.style.display = "block";
             fb.innerHTML = `
-                <div><strong>Texto esperado:</strong> ${highlighted.join(" ")}</div>
-                <div class="heard-text"><strong>Tu respuesta:</strong> "${userInput || "Sin respuesta"}"</div>
+                <div><strong>Texto esperado:</strong> ${highlight(targetWords, r.ok)}</div>
+                <div class="heard-text"><strong>Tu respuesta:</strong> "${esc(userInput || "Sin respuesta")}"</div>
             `;
         });
-
-        return totalRatio / dictationSentences.length;
+        return clamp01(totalRatio / dictationSentences.length);
     }
 
     function updateWordCount() {
@@ -747,9 +791,10 @@
             "swam", "won", "ran", "woke", "took", "felt", "met", "got", "made",
             "came", "bought", "read", "slept", "wrote", "spent", "found", "gave"
         ]);
+        const notPastEd = new Set(["need","indeed","speed","feed","seed","proceed","succeed","exceed","hundred","bed","red","sacred","weed","breed"]);
         const pastVerbsFound = new Set();
         words.forEach(w => {
-            if (commonIrregularPast.has(w) || (w.length > 3 && w.endsWith("ed"))) {
+            if (commonIrregularPast.has(w) || (w.length > 3 && w.endsWith("ed") && !notPastEd.has(w))) {
                 pastVerbsFound.add(w);
             }
         });
@@ -760,7 +805,22 @@
         const markersFound = markers.filter(m => words.includes(m));
         const markersScore = Math.min(1, markersFound.length / 2) * 0.20;
 
-        const totalRatio = lengthScore + verbsScore + markersScore;
+        // Errores frecuentes en pasado simple
+        const errors = [];
+        const overreg = { goed:"went", haved:"had", doed:"did", seed:"saw", eated:"ate", drinked:"drank", rided:"rode", swimmed:"swam", runned:"ran", winned:"won", maked:"made", getted:"got", feeled:"felt", taked:"took" };
+        words.forEach(w => { if (overreg[w]) errors.push(`Usa "<strong>${overreg[w]}</strong>" en vez de "<strong>${w}</strong>".`); });
+        for (let i = 0; i < words.length - 1; i++) {
+            if (words[i] === "didnt" && (commonIrregularPast.has(words[i + 1]) || (words[i + 1].length > 3 && words[i + 1].endsWith("ed") && !notPastEd.has(words[i + 1]))))
+                errors.push(`Tras <em>didn't</em> usa el verbo base: "<strong>didn't ${esc(words[i + 1])}</strong>" es incorrecto.`);
+        }
+        rawText.split(/[.!?\n]+/).forEach(sen => {
+            const low = sen.toLowerCase();
+            if (/\b(last|yesterday|ago)\b/.test(low) && /\b(i|we|they|he|she)\s+(go|play|watch|eat|swim|ride|visit|stay|run|have|see|make|come|get|take|do|exercise|practice)\b/.test(low))
+                errors.push(`Esta oración habla del pasado pero el verbo está en presente: "<em>${esc(sen.trim().slice(0, 60))}</em>".`);
+        });
+        const uniqueErrors = Array.from(new Set(errors));
+        const errorPenalty = Math.min(0.3, uniqueErrors.length * 0.08);
+        const totalRatio = clamp01(lengthScore + verbsScore + markersScore - errorPenalty);
         document.getElementById("writing-score-pill").innerText = `Writing: ${Math.round(totalRatio * 100)}%`;
 
         const fb = document.getElementById("writingFeedback");
@@ -773,6 +833,7 @@
                 <li><strong>Conectores / tiempo detectados (${markersFound.length}):</strong> ${markersFound.length > 0 ? markersFound.join(", ") : "Ninguno detectado"}</li>
             </ul>
         `;
+        if (uniqueErrors.length) fb.innerHTML += `<div style="margin-top:8px;color:#991b1b;"><strong>Correcciones:</strong><ul style="margin:4px 0 0 18px;padding:0;">${uniqueErrors.map(e => `<li>${e}</li>`).join("")}</ul></div>`;
         return totalRatio;
     }
 
@@ -782,62 +843,69 @@
             alert("Tu navegador no soporta reconocimiento de voz integrado. Usa Google Chrome o Microsoft Edge.");
             return;
         }
-        if (activeId !== null && activeId !== id) {
-            stopSpeech(activeId);
-        }
+        if (activeId !== null && activeId !== id) stopSpeech(activeId);
 
         activeId = id;
-        let finalTranscript = "";
+        manualStop = false;
+        let finalTranscript = "", committed = "";
+        const statusEl = document.getElementById(`status-${id}`);
+        const cap = setTimeout(() => stopSpeech(id), 60000);
 
-        recognition = new SpeechRecognition();
-        recognition.lang = "en-US";
-        recognition.interimResults = true;
-        recognition.continuous = true;
-
-        recognition.onresult = (event) => {
-            let interim = "";
-            for (let i = event.resultIndex; i < event.results.length; i++) {
-                const transcript = event.results[i][0].transcript;
-                if (event.results[i].isFinal) {
-                    finalTranscript += transcript + " ";
-                } else {
-                    interim += transcript;
-                }
-            }
-            document.getElementById(`status-${id}`).innerHTML = `<span class="recording-active">● Escuchando:</span> ${interim || finalTranscript}`;
-        };
-
-        recognition.onerror = (event) => {
-            document.getElementById(`status-${id}`).innerText = `Error de micrófono: ${event.error}`;
-        };
-
-        recognition.onend = () => {
+        const finish = () => {
+            clearTimeout(cap);
             const passage = readingPassages.find(p => p.id === id);
             evaluatePronunciation(id, passage.text, finalTranscript.trim());
             document.getElementById(`rec-${id}`).disabled = false;
             document.getElementById(`stop-${id}`).disabled = true;
-            document.getElementById(`status-${id}`).innerText = "Grabación guardada y evaluada";
-            activeId = null;
+            statusEl.innerText = "Grabación guardada y evaluada";
+            if (activeId === id) activeId = null;
         };
 
-        recognition.start();
+        const begin = () => {
+            const rec = new SpeechRecognition();
+            rec.lang = "en-US";
+            rec.interimResults = true;
+            rec.continuous = true;
+            rec.onresult = (event) => {
+                let fin = "", interim = "";
+                for (let i = 0; i < event.results.length; i++) {
+                    const t = event.results[i][0].transcript;
+                    if (event.results[i].isFinal) fin += t + " "; else interim += t;
+                }
+                finalTranscript = (committed + " " + fin).trim();
+                statusEl.innerHTML = `<span class="recording-active">● Escuchando:</span> ${esc(interim || fin)}`;
+            };
+            rec.onerror = (event) => {
+                if (event.error === "not-allowed" || event.error === "service-not-allowed") manualStop = true;
+                statusEl.innerText = `Aviso del micrófono: ${event.error}`;
+            };
+            rec.onend = () => {
+                committed = finalTranscript;
+                if (!manualStop && activeId === id) { try { begin(); return; } catch (_) {} }
+                finish();
+            };
+            recognition = rec;
+            rec.start();
+        };
+
+        begin();
         document.getElementById(`rec-${id}`).disabled = true;
         document.getElementById(`stop-${id}`).disabled = false;
-        document.getElementById(`status-${id}`).innerHTML = `<span class="recording-active">● Grabando... lee en voz alta</span>`;
+        statusEl.innerHTML = `<span class="recording-active">● Grabando... lee en voz alta</span>`;
     }
 
     function stopSpeech(id) {
-        if (recognition && activeId === id) {
-            recognition.stop();
-        }
+        manualStop = true;
+        if (recognition && activeId === id) recognition.stop();
     }
 
-    function finishExam() {
+    async function finishExam() {
         stopAudio();
+        if (activeId !== null) { stopSpeech(activeId); await new Promise(r => setTimeout(r, 900)); }
         const studentName = document.getElementById("studentName").value.trim() || "Estudiante";
 
         // 1. Speaking / Reading Aloud (2.5 pts)
-        const avgSpeakingRatio = Object.values(pronunciationScores).reduce((a, b) => a + b, 0) / readingPassages.length;
+        const avgSpeakingRatio = clamp01(Object.values(pronunciationScores).reduce((a, b) => a + b, 0) / readingPassages.length);
         const speakingPoints = avgSpeakingRatio * WEIGHT_SPEAKING;
 
         // 2. Reading Comprehension (2.5 pts)
@@ -861,11 +929,11 @@
         const listeningPoints = listeningRatio * WEIGHT_LISTENING;
 
         // 4. Writing (2.5 pts)
-        const writingRatio = evaluateWriting();
+        const writingRatio = clamp01(evaluateWriting());
         const writingPoints = writingRatio * WEIGHT_WRITING;
 
         // Nota final sobre 10.0
-        const finalGrade = (speakingPoints + readingPoints + listeningPoints + writingPoints).toFixed(1);
+        const finalGrade = Math.max(1, Math.min(10, speakingPoints + readingPoints + listeningPoints + writingPoints)).toFixed(1);
 
         // Recopilar palabras mal pronunciadas para el repaso posterior
         const allMissed = [];
@@ -881,11 +949,13 @@
         });
 
         let reviewHtml = "";
-        if (allMissed.length === 0) {
+        if (recordedIds.size === 0) {
+            reviewHtml = `<p>⚠️ No grabaste ninguna lectura, por eso Speaking vale 0. Recarga la página para intentarlo de nuevo.</p>`;
+        } else if (allMissed.length === 0) {
             reviewHtml = `<p class="perfect-msg">¡Excelente trabajo! Pronunciaste correctamente todas las palabras de los textos.</p>`;
         } else {
             const buttonsHtml = allMissed
-                .map(word => `<button class="review-word-btn" onclick="speakWord('${word.replace(/'/g, "\\'")}')">🔊 ${word}</button>`)
+                .map(word => `<button class="review-word-btn" data-word="${esc(word)}" onclick="speakWord(this.dataset.word)">🔊 ${esc(word)}</button><button class="review-word-btn" style="background:#dbeafe;color:#1e3a8a;" data-word="${esc(word)}" onclick="practiceWord(this)">🎤 Repetir</button>`)
                 .join("");
             reviewHtml = `
                 <p><strong>Repaso de Pronunciación (${allMissed.length} palabras guardadas):</strong> Haz clic en cada palabra para escuchar su pronunciación correcta en inglés:</p>
@@ -901,9 +971,9 @@
         const summary = document.getElementById("finalSummary");
         summary.style.display = "block";
         summary.innerHTML = `
-            <h3>Reporte Final de 4 Habilidades — ${studentName}</h3>
+            <h3>Reporte Final de 4 Habilidades — ${esc(studentName)}</h3>
             <div class="grade-banner">
-                <div>Calificación Final (Escala 0.0 a 10.0)</div>
+                <div>Calificación Final (Escala 1.0 a 10.0)</div>
                 <div class="grade-number">${finalGrade} / 10.0</div>
             </div>
             <div class="grade-breakdown">
@@ -929,11 +999,13 @@
                 ${reviewHtml}
             </div>
         `;
+        document.getElementById("btnFinish").disabled = true;
         summary.scrollIntoView({ behavior: "smooth" });
     }
 
     if ("speechSynthesis" in window) {
-        window.speechSynthesis.onvoiceschanged = () => getEnglishVoices();
+        window.speechSynthesis.onvoiceschanged = populateVoices;
+        populateVoices();
     }
 
     renderSpeakingCards();
